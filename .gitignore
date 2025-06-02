@@ -25,6 +25,7 @@ utils/eval/KAIST_annotation.json
 *.cfg
 !setup.cfg
 !cfg/yolov3*.cfg
+*.tar
 
 storage.googleapis.com
 runs/*
