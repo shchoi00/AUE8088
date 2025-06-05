@@ -130,6 +130,36 @@ def seed_worker(worker_id):
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
+def _copy_paste(im0, im1, labels, segments, p=0.5):
+    """
+    (For RGBT Images)
+    Applies Copy-Paste augmentation by flipping and merging segments and labels on an image.
+
+    Details at https://arxiv.org/abs/2012.07177.
+    """
+    n = len(segments)
+    if p and n:
+        h, w, c = im0.shape  # height, width, channels
+        im_new = np.zeros(im0.shape, np.uint8)
+        for j in random.sample(range(n), k=round(p * n)):
+            l, s = labels[j], segments[j]
+            box = w - l[3], l[2], w - l[1], l[4]
+            x1, y1, x2, y2 = map(int, box)
+            ioa = bbox_ioa(box, labels[:, 1:5])  # intersection over area
+            if (ioa < 0.30).all():  # allow 30% obscuration of existing labels
+                labels = np.concatenate((labels, [[l[0], *box]]), 0)
+                segments.append(np.concatenate((w - s[:, 0:1], s[:, 1:2]), 1))
+                # cv2.drawContours(im_new, [segments[j].astype(np.int32)], -1, (1, 1, 1), cv2.FILLED)
+                cv2.rectangle(im0, (x1, y1), (x2, y2), thickness=cv2.FILLED)
+
+
+        result0 = cv2.flip(im0, 1)  # augment segments (flip left-right)
+        result1 = cv2.flip(im1, 1)
+        i = cv2.flip(im_new, 1).astype(bool)
+        im0[i] = result0[i]  # cv2.imwrite('debug.jpg', im)  # debug
+        im1[i] = result1[i]
+
+    return im0, im1, labels, segments
 
 # Inherit from DistributedSampler and override iterator
 # https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py
@@ -1402,7 +1432,7 @@ class LoadRGBTImagesAndLabels(LoadImagesAndLabels):
         # img4, labels4 = replicate(img4, labels4)  # replicate
         print(labels4)
         # Augment
-        img4_lwir, img4_vis, labels4, segments4 = self._copy_paste(img4_lwir, img4_vis, labels4, segments4, p=self.hyp["copy_paste"])
+        img4_lwir, img4_vis, labels4, segments4 = _copy_paste(img4_lwir, img4_vis, labels4, segments4, p=self.hyp["copy_paste"])
 
         # # --- (8) (선택) random_perspective 증강 적용 ---
         # # 기하학적 변형 행렬을 생성하여, 이미지와 라벨 좌표를 동시에 왜곡
@@ -1427,36 +1457,7 @@ class LoadRGBTImagesAndLabels(LoadImagesAndLabels):
 
         return [img4_lwir, img4_vis], labels4
 
-    def _copy_paste(self, im0, im1, labels, segments, p=0.5):
-        """
-        (For RGBT Images)
-        Applies Copy-Paste augmentation by flipping and merging segments and labels on an image.
 
-        Details at https://arxiv.org/abs/2012.07177.
-        """
-        n = len(segments)
-        if p and n:
-            h, w, c = im0.shape  # height, width, channels
-            im_new = np.zeros(im0.shape, np.uint8)
-            for j in random.sample(range(n), k=round(p * n)):
-                l, s = labels[j], segments[j]
-                box = w - l[3], l[2], w - l[1], l[4]
-                x1, y1, x2, y2 = map(int, box)
-                ioa = bbox_ioa(box, labels[:, 1:5])  # intersection over area
-                if (ioa < 0.30).all():  # allow 30% obscuration of existing labels
-                    labels = np.concatenate((labels, [[l[0], *box]]), 0)
-                    segments.append(np.concatenate((w - s[:, 0:1], s[:, 1:2]), 1))
-                    # cv2.drawContours(im_new, [segments[j].astype(np.int32)], -1, (1, 1, 1), cv2.FILLED)
-                    cv2.rectangle(im0, (x1, y1), (x2, y2), thickness=cv2.FILLED)
-
-
-            result0 = cv2.flip(im0, 1)  # augment segments (flip left-right)
-            result1 = cv2.flip(im1, 1)
-            i = cv2.flip(im_new, 1).astype(bool)
-            im0[i] = result0[i]  # cv2.imwrite('debug.jpg', im)  # debug
-            im1[i] = result1[i]
-
-        return im0, im1, labels, segments
 
     @staticmethod
     def collate_fn(batch):
